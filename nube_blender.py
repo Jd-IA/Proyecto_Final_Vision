@@ -19,14 +19,14 @@ def cargar_nube_puntos(ruta_archivo):
         for linea in f:
             linea = linea.strip()
             if linea.startswith('#') or linea == '':
-                continue  # saltar comentarios y lineas vacias
+                continue  
             partes = linea.split()
             if len(partes) >= 3:
                 try:
                     x, y, z = float(partes[0]), float(partes[1]), float(partes[2])
                     puntos.append((x, y, z))
                 except ValueError:
-                    pass  # ignorar lineas con formato invalido
+                    pass  
     return puntos
 
 

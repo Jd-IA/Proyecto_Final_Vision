@@ -39,12 +39,8 @@ class Voxel:
         self.matriz_3d_N4 = matriz
         self.perimetro_3d_N4 = perimetro
 
-    # ========================================================================
-    # CARGAR MATRIZ
-    # ========================================================================
-
     def cargar_matriz(self, ruta_archivo=None):
-        """Carga matriz 3D desde archivo .txt"""
+        """Carga la matriz 3D desde un archivo .txt seleccionado por dialogo o por ruta. Inicializa las dimensiones del objeto."""
         
         if ruta_archivo is None:
             try:
@@ -97,12 +93,9 @@ class Voxel:
         print(f"  Shape: {matriz.shape}")
         return True
 
-    # ========================================================================
-    # N4 Y AF8
-    # ========================================================================
-
     def vecindad_N4(self):
-        """Detecta vóxeles de perímetro N4"""
+        """Calcula el perimetro N4 del objeto voxelizado. Un voxel pertenece al perimetro si al menos uno de sus 4 vecinos 
+        (arriba, abajo, izquierda, derecha) esta vacio. Guarda el resultado en self.matriz_3d_N4."""
         if len(self.matriz_3d) == 0:
             print("Error: No se ha cargado una matriz.")
             return
@@ -131,22 +124,18 @@ class Voxel:
         print(f"Perimetro N4: {perimetro} voxeles")
 
     def detectar_componentes_optimizado(self, capa_idx):
-        """
-        Detecta componentes conexas del perimetro N4 de una capa.
-        Trabaja sobre matriz_3d_N4 (solo el borde), no sobre la matriz rellena,
-        ya que el chain code F8 se calcula sobre el contorno del objeto.
-        """
+        """Detecta las componentes conexas del perimetro N4 de una capa usando conectividad de 8 vecinos. 
+        Retorna una lista de arrays de coordenadas, una por componente."""
         if capa_idx >= len(self.matriz_3d_N4):
             return []
 
-        # Usar el perimetro N4, no la matriz rellena
+        # Usar el perimetro N4
         capa = self.matriz_3d_N4[capa_idx]
 
         if capa.sum() == 0:
             return []
 
-        # connectivity=2 (8-vecindad) para que los pixeles diagonales del contorno
-        # queden conectados y formen componentes continuas recorribles con F8
+
         labeled = measure.label(capa, connectivity=2)
         regiones = measure.regionprops(labeled)
 
@@ -157,10 +146,8 @@ class Voxel:
         return sorted(componentes, key=lambda c: np.min(np.sum(c**2, axis=1)))
 
     def f8(self):
-        """
-        F8: calcula el chain code sobre el perimetro N4.
-        Requiere haber ejecutado vecindad_N4() antes.
-        """
+        """Calcula el codigo de cadena F8 (Freeman chain code) sobre el perimetro N4 para cada capa.
+         Recorre el contorno de cada componente y codifica las direcciones de movimiento."""
         if len(self.matriz_3d_N4) == 0:
             print("Error: primero ejecuta vecindad_N4()")
             return
@@ -169,7 +156,7 @@ class Voxel:
         self.matriz_contornos_coords = []
 
         for capa_idx in range(self.capa):
-            # detectar_componentes_optimizado ya trabaja sobre N4
+
             componentes = self.detectar_componentes_optimizado(capa_idx)
 
             if len(componentes) == 0:
@@ -194,20 +181,8 @@ class Voxel:
             self.matriz_contornos_coords.append(coords_lista)
 
     def _codificar_f8_opt(self, coords):
-        """
-        Codifica el contorno de una componente en F8 (Freeman chain code).
-
-        Algoritmo estandar de seguimiento de contorno (Pavlidis / Freeman):
-        - Punto inicial: pixel mas arriba-izquierda del contorno N4
-        - En cada paso: busca el siguiente pixel en orden antihorario
-          empezando desde (dir_anterior + 6) % 8
-        - Para cuando regresa al inicio
-
-        Numeracion Freeman en coordenadas (fila, col) con fila creciendo hacia abajo:
-            3 2 1
-            4 X 0
-            5 6 7
-        """
+        """Recorre el contorno de una componente y genera su codigo F8.
+        Implementa el algoritmo de seguimiento de contorno de Pavlidis partiendo del pixel mas arriba-izquierda."""
         if len(coords) < 2:
             return []
 
@@ -257,7 +232,7 @@ class Voxel:
         return codigo
 
     def af8(self):
-        """AF8: Convierte F8 a AF8"""
+        """Convierte los codigos F8 a AF8 (Angle Freeman chain code). Calcula la diferencia modulo 8 entre simbolos F8 consecutivos."""
         if len(self.matriz_codigos_F8) == 0:
             print("Error: primero ejecuta f8()")
             return
@@ -278,8 +253,7 @@ class Voxel:
                     continue
                 
                 f8_array = np.array(f8, dtype=int)
-                # AF8 correcto segun el articulo: diferencia entre simbolos F8 consecutivos
-                # El primer simbolo AF8 es el primer simbolo F8 (sin diferencia)
+
                 diffs = np.diff(f8_array) % 8
                 af8 = [int(f8_array[0])] + diffs.tolist()
                 
@@ -291,12 +265,9 @@ class Voxel:
             
             self.matriz_codigos_AF8.append(componentes_af8)
 
-    # ========================================================================
-    # MOSTRAR AF8 POR CAPA SOLAMENTE
-    # ========================================================================
-
     def mostrar_af8_por_capa(self):
-        """Muestra información de AF8 por capa solamente"""
+        """Imprime en consola un resumen del codigo AF8 por capa: numero de componentes,
+        pixeles totales y longitud del codigo."""
         
         if len(self.matriz_codigos_AF8) == 0:
             print("Error: primero ejecuta af8()")
@@ -318,123 +289,9 @@ class Voxel:
         
         print("="*80 + "\n")
 
-    # ========================================================================
-    # ESQUINAS DSS
-    # ========================================================================
-
-    # ========================================================================
-    # FUNCIONES DE FRECUENCIA: p1, pmax, q1, qmax, r1, rmax (Articulo 2022)
-    # ========================================================================
-
-    def _acumular_frecuencias(self, af8, f_p, f_q, f_r):
-        """
-        Acumula las funciones de frecuencia f_p, f_q, f_r de una componente.
-          f_p(i): runs de 'a' (ceros) de longitud i NO precedidos por par Y
-          f_q(i): runs de 'a' (ceros) de longitud i SÍ precedidos por par Y (bh/hb)
-          f_r(i): patrón (Y a^q) repetido exactamente i veces consecutivas
-        """
-        n = len(af8)
-
-        # -- f_p y f_q: runs maximales de ceros --
-        i = 0
-        while i < n:
-            if af8[i] == 0:
-                ini = i
-                while i < n and af8[i] == 0:
-                    i += 1
-                L = i - ini  # longitud del run de ceros
-                if ini >= 2 and self._es_par_Y(af8, ini - 2):
-                    f_q[L] += 1          # run precedido por par Y
-                elif ini >= 1:
-                    f_p[L] += 1          # run precedido por X normal (!= a)
-            else:
-                i += 1
-
-        # -- f_r: repeticiones consecutivas de (Y a^q) --
-        i = 0
-        while i < n:
-            if self._es_par_Y(af8, i):
-                rep = 0
-                j = i
-                while j < n and self._es_par_Y(af8, j):
-                    j += 2                       # consumir par Y
-                    while j < n and af8[j] == 0:  # consumir a^q
-                        j += 1
-                    rep += 1
-                f_r[rep] += 1
-                i = j
-            else:
-                i += 1
-
-    def calcular_parametros_frecuencia(self, delta=1, verbose=True):
-        """
-        Calcula p1, pmax, q1, qmax, r1, rmax del objeto completo,
-        según las funciones de frecuencia del artículo 2022 (pág. 12).
-
-        Estos valores definen las densidades:
-          Alta (H):  P(D, floor(p1/2), floor(q1/2), floor(r1/2), 5)
-          Media (M): P(D, floor(pmax/2), floor(qmax/2), floor(rmax/2), 10)
-          Baja (L):  P(D, pmax,     qmax,     rmax,     20)
-
-        Parámetro:
-            delta: muestreo de capas (CC(D,δ) usa capas 0, δ, 2δ, ...)
-
-        Retorna dict con p1, pmax, q1, qmax, r1, rmax y las funciones f_p, f_q, f_r.
-        """
-        if len(self.matriz_codigos_AF8) == 0:
-            print("Error: primero ejecuta af8()")
-            return None
-
-        from collections import defaultdict
-        f_p = defaultdict(int)
-        f_q = defaultdict(int)
-        f_r = defaultdict(int)
-
-        # CC(D, delta): capas 0, delta, 2*delta, ...
-        for capa_idx in range(0, self.capa, delta):
-            if capa_idx >= len(self.matriz_codigos_AF8):
-                break
-            for comp in self.matriz_codigos_AF8[capa_idx]:
-                self._acumular_frecuencias(comp['codigo_af8'], f_p, f_q, f_r)
-
-        def rango(f):
-            claves = [i for i, c in f.items() if c > 0 and i >= 1]
-            if not claves:
-                return 0, 0
-            return min(claves), max(claves)
-
-        p1, pmax = rango(f_p)
-        q1, qmax = rango(f_q)
-        r1, rmax = rango(f_r)
-
-        resultado = {
-            'p1': p1, 'pmax': pmax,
-            'q1': q1, 'qmax': qmax,
-            'r1': r1, 'rmax': rmax,
-            'f_p': dict(f_p), 'f_q': dict(f_q), 'f_r': dict(f_r),
-            'delta': delta
-        }
-
-        if verbose:
-            print("\n" + "="*70)
-            print(f"PARÁMETROS DE FRECUENCIA - {self.nombre_objeto} (δ={delta})")
-            print("="*70)
-            print(f"{'Parámetro':>12} {'mínimo (i1)':>14} {'máximo (imax)':>14}")
-            print("-"*70)
-            print(f"{'p':>12} {p1:>14} {pmax:>14}")
-            print(f"{'q':>12} {q1:>14} {qmax:>14}")
-            print(f"{'r':>12} {r1:>14} {rmax:>14}")
-            print("-"*70)
-            print("Densidades sugeridas (Definición 20):")
-            print(f"  Alta  (H): P(D, {p1//2}, {q1//2}, {r1//2}, 5)")
-            print(f"  Media (M): P(D, {pmax//2}, {qmax//2}, {rmax//2}, 10)")
-            print(f"  Baja  (L): P(D, {pmax}, {qmax}, {rmax}, 20)")
-            print("="*70 + "\n")
-
-        return resultado
-
     def detectar_esquinas_dss(self, p, q, r):
-        """Detecta esquinas con gramática Xa^p(Ya^q)^r"""
+        """Detecta los key points del objeto aplicando la gramatica sobre el codigo AF8. 
+        Para cada componente busca los simbolos que inician un DSS valido con los parametros dados."""
         
         self.p = p
         self.q = q
@@ -508,12 +365,8 @@ class Voxel:
                     'FOM': FOM
                 })
 
-    # ========================================================================
-    # MOSTRAR RESUMEN POR CAPA DE METRICAS
-    # ========================================================================
-
     def mostrar_resumen_metricas_por_capa(self):
-        """Muestra resumen de métricas del error por capa"""
+        """Imprime en consola una tabla con las metricas por capa: N4, DP, ISE, CR y FOM."""
         
         if not self.matriz_esquinas_3d:
             print("Error: primero ejecuta detectar_esquinas_dss()")
@@ -548,12 +401,8 @@ class Voxel:
         print(f"{'TOTAL':>4} {total_n4:6d} {total_dp:5d}")
         print("="*80 + "\n")
 
-    # ========================================================================
-    # EXPORTAR METRICAS CON NOMBRE DEL OBJETO Y PARAMETROS
-    # ========================================================================
-
     def exportar_metricas(self):
-        """Exporta métricas a archivo en la carpeta del script"""
+        """Exporta las metricas por capa a un archivo .txt en la carpeta del script con el nombre del objeto y los parametros p, q, r."""
         
         if not self.matriz_esquinas_3d:
             print("Error: primero ejecuta detectar_esquinas_dss()")
@@ -602,12 +451,8 @@ class Voxel:
             print(f"Error al exportar: {e}")
             return None
 
-    # ========================================================================
-    # GENERAR NUBES
-    # ========================================================================
-
     def generar_nubes_puntos(self, delta_values):
-        """Genera múltiples nubes filtrando por delta"""
+        """Genera nubes de puntos filtrando las capas segun el parametro delta. Solo incluye capas cuyos indices son multiplos de delta."""
         
         if not self.matriz_esquinas_3d:
             print("Error: primero ejecuta detectar_esquinas_dss()")
@@ -653,12 +498,8 @@ class Voxel:
                 'num_capas': len(capas_procesadas)
             }
 
-    # ========================================================================
-    # EXPORTAR NUBES
-    # ========================================================================
-
     def exportar_nubes_con_nombre(self):
-        """Exporta nube original (delta=1) + las generadas en la carpeta del script"""
+        """Exporta las nubes de puntos generadas a archivos .txt en la carpeta del script. Cada archivo contiene las coordenadas x y z por linea."""
         
         if not self.nubes_puntos:
             print("Error: primero ejecuta generar_nubes_puntos()")
@@ -694,12 +535,8 @@ class Voxel:
         
         return archivos
 
-    # ========================================================================
-    # CALCULAR HAUSDORFF DISTANCE
-    # ========================================================================
-
     def calcular_hausdorff_n4_vs_dss(self, delta):
-        """Calcula Hausdorff Distance con formato especificado"""
+        """Calcula la distancia de Hausdorff y el error geometrico promedio entre la nube N4 del objeto y la nube DSS generada con el delta indicado."""
         
         # V1: Coordenadas N4
         V1 = np.argwhere(self.matriz_3d_N4 == 1)
@@ -766,16 +603,8 @@ class Voxel:
             'total_v2': len(V2)
         }
 
-    # ========================================================================
-    # EXPORTAR NUBE N4
-    # ========================================================================
-
     def exportar_n4(self):
-        """
-        Exporta las coordenadas de la matriz N4 como nube de puntos.
-        Formato de salida: x y z por linea (sin encabezados).
-        Requiere haber ejecutado cargar_matriz() y vecindad_N4() antes.
-        """
+        """Exporta las coordenadas de los voxeles del perimetro N4 a un archivo .txt. Cada linea contiene x y z sin encabezados."""
         if len(self.matriz_3d_N4) == 0:
             print("Error: primero ejecuta vecindad_N4()")
             return None
@@ -783,7 +612,7 @@ class Voxel:
         coords = np.argwhere(self.matriz_3d_N4 == 1)
 
         if len(coords) == 0:
-            print("Error: la matriz N4 no contiene voxeles de perimetre")
+            print("Error: la matriz N4 no contiene voxeles de perimetro")
             return None
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -802,28 +631,15 @@ class Voxel:
             print(f"Error al exportar N4: {e}")
             return None
 
-    # ========================================================================
-    # MÉTODOS AUXILIARES
-    # ========================================================================
-
     def _validar_parametros_dss(self, p, q, r):
-        """Valida parámetros DSS"""
+        """Verifica que los parametros p, q y r sean no negativos."""
         if p < 0 or q < 0 or r < 0:
             print(f"Error: p, q, r deben ser no-negativos")
             return False
         return True
 
     def _detectar_breakpoints_dss(self, af8, p, q, r):
-        """
-        Detecta key points según gramática Xa^p(Ya^q)^r (Definición 7, artículo 2022).
-
-        Un símbolo X es key point SOLO si los símbolos que le siguen forman
-        exactamente a^p(Ya^q)^r. Si hay match, X es key point y se salta el DSS.
-        Si NO hay match, ese símbolo NO es key point y se avanza 1.
-
-        Con (p,q,r)=(0,0,0) todo símbolo es key point (Remark 5).
-        Parametros mas altos -> menos key points -> nube mas dispersa.
-        """
+        """Recorre el codigo AF8 de una componente y retorna las posiciones de los key points que inician un DSS valido con los parametros dados."""
         n = len(af8)
         if n == 0:
             return []
@@ -835,20 +651,17 @@ class Voxel:
             fin = self._match_dss(af8, i, p, q, r)
 
             if fin > i:
-                # X inicia un DSS valido -> es key point; saltar el DSS completo
+                # X inicia un DSS valido es key point; saltar el DSS completo
                 key_points.append(i)
                 i = fin
             else:
-                # No inicia un DSS valido -> NO es key point
+                # No inicia un DSS valido NO es key point
                 i += 1
 
         return key_points
 
     def _es_par_Y(self, af8, j):
-        """
-        Verifica si en la posición j hay un par Y en {bh, hb}.
-        En AF8 numerico: b=1, h=7  ->  bh=(1,7), hb=(7,1)
-        """
+        """Verifica si en la posicion j del codigo AF8 hay un par diagonal Y, es decir (1,7) o (7,1)."""
         n = len(af8)
         if j + 1 >= n:
             return False
@@ -856,24 +669,7 @@ class Voxel:
                 (af8[j] == 7 and af8[j + 1] == 1))
 
     def _match_dss(self, af8, start, p, q, r):
-        """
-        Intenta hacer match con la gramatica Xa^p(Ya^q)^r del articulo 2022.
-            X en {a,...,h} (cualquier simbolo)
-            Y en {bh, hb}  (par diagonal: (1,7) o (7,1) en AF8)
-            a = 0  (simbolo recto)
-
-        Segun la Definicion 7 del articulo, X es key point si los simbolos
-        que le siguen forman al menos a^p(Ya^q)^r. Esto significa:
-          - Se consumen EXACTAMENTE p ceros despues de X
-          - Si r > 0, se consumen EXACTAMENTE r repeticiones de (par Y + q ceros)
-          - Si despues del patron queda algo, el match es valido igual
-
-        Con p=q=r=0 todo simbolo es key point (Remark 5).
-
-        Retorna:
-            posicion final del DSS si hay match (> start)
-            start si no hay match
-        """
+        """Intenta hacer match del patron Xa^p(Ya^q)^r en el codigo AF8 a partir de la posicion start. Retorna la posicion final del DSS si hay match, o start si no."""
         n = len(af8)
         i = start
 
@@ -896,7 +692,7 @@ class Voxel:
         if r == 0:
             return i
 
-        # (Ya^q)^r: EXACTAMENTE r repeticiones de (par Y + q ceros)
+        # (Ya^q)^r: exactamente r repeticiones de (par Y + q ceros)
         for _ in range(r):
             # Y = par diagonal bh=(1,7) o hb=(7,1)
             if self._es_par_Y(af8, i):
@@ -904,7 +700,7 @@ class Voxel:
             else:
                 return start  # no encontro par Y requerido
 
-            # a^q: AL MENOS q ceros
+            # a^q: almenos q ceros
             count_q = 0
             while count_q < q:
                 if i < n and af8[i] == 0:
@@ -917,7 +713,7 @@ class Voxel:
 
 
     def _calcular_ise_total(self, coords, break_points):
-        """Calcula ISE total"""
+        """Calcula el error cuadratico integral (ISE) sumando el cuadrado de la distancia de cada pixel del contorno a su segmento de aproximacion poligonal."""
         if len(coords) < 2 or len(break_points) < 2:
             return 0.0
 
@@ -956,7 +752,7 @@ class Voxel:
         return ISE
 
     def _extraer_esquinas(self, capa_idx, coords, break_points):
-        """Extrae coordenadas de esquinas"""
+        """Extrae las coordenadas 3D (x, y, z) de los key points detectados en una capa y las retorna como lista de diccionarios."""
         esquinas = []
 
         for bp_idx in break_points:
@@ -975,34 +771,23 @@ class Voxel:
         return esquinas
 
 if __name__ == "__main__":
-    
-    print("""
-================================================================================
-  VOXEL.PY 
 
-  1. Mostrar AF8 por capa
-  2. Resumen de metricas por capa
-  3. Exportar metricas: nombre_p_q_r_metricas.txt
-  4. Exportar nubes: cloud_p_nombre_delta=X.txt
-  5. Calcular Hausdorff Distance
-================================================================================
-    """)
     
-    # Ejemplo de flujo completo
-    voxel = Voxel()
-    voxel.cargar_matriz()
-    voxel.vecindad_N4()
-    voxel.exportar_n4()
-    voxel.f8()
-    voxel.af8()
+    # flujo completo
+    #voxel = Voxel()
+    #voxel.cargar_matriz()
+    #voxel.vecindad_N4()
+    #voxel.exportar_n4()
+    #voxel.f8()
+    #voxel.af8()
     
-    # [1] Mostrar AF8 por capa
+    # Mostrar AF8 por capa
     #voxel.mostrar_af8_por_capa()
     
     # Detectar esquinas
     #voxel.detectar_esquinas_dss(p=13, q=9, r=7)
     
-    # [2] Mostrar resumen de métricas por capa
+    # Mostrar resumen de métricas por capa
     #voxel.mostrar_resumen_metricas_por_capa()
     
     # Generar nubes
@@ -1010,16 +795,21 @@ if __name__ == "__main__":
     #d1 = 5
     #voxel.generar_nubes_puntos([original,d1])
     
-    # [3] Exportar métricas
+    # Exportar métricas
     #voxel.exportar_metricas()
     
-    # [4] Exportar nubes
+    # Exportar nubes
     #voxel.exportar_nubes_con_nombre()
     
-    # [5] Calcular Hausdorff Distance
+    # Calcular Hausdorff Distance
     #voxel.calcular_hausdorff_n4_vs_dss(delta=d1)
 #========================================================================
-
+    voxel = Voxel()
+    voxel.cargar_matriz()
+    voxel.vecindad_N4()
+    voxel.exportar_n4()
+    voxel.f8()
+    voxel.af8()
     voxel.detectar_esquinas_dss(p=1, q=1, r=1)
     #voxel.mostrar_resumen_metricas_por_capa()
     voxel.generar_nubes_puntos([2])  
